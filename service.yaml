@@ -1,0 +1,62 @@
+# ---
+# Service: Предоставляет стабильную точку доступа к набору наших подов.
+# ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mindbox-sre-app-svc
+spec:
+  selector:
+    app: mindbox-sre-app
+  ports:
+    - protocol: TCP
+      port: 80 # Внешний порт сервиса
+      targetPort: http # Имя порта в подах (8080)
+  type: ClusterIP # Сервис доступен только внутри кластера
+
+---
+# ---
+# HorizontalPodAutoscaler: Автоматически масштабирует количество подов
+# в зависимости от нагрузки.
+# ---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mindbox-sre-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mindbox-sre-app
+  # minReplicas: Ночью, когда нагрузки нет, будут работать 2 пода для отказоустойчивости.
+  minReplicas: 2
+  # maxReplicas: 4 пода справляются с пиком, но мы задаем 6 для запаса прочности
+  # на случай непредвиденных всплесков трафика.
+  maxReplicas: 6
+  metrics:
+    # Масштабирование по утилизации CPU.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # HPA будет добавлять поды, если средняя утилизация CPU превысит 70% от запрошенных (requests).
+          # И удалять, если утилизация упадет.
+          averageUtilization: 70
+
+---
+# ---
+# PodDisruptionBudget: Защищает приложение от добровольных сбоев (voluntary disruptions),
+# например, при обновлении нод кластера.
+# ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mindbox-sre-app-pdb
+spec:
+  # minAvailable: 3 гарантирует, что при пиковой нагрузке (когда работает 4+ пода)
+  # во время плановых работ будет доступно не менее 3-х подов.
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: mindbox-sre-app
